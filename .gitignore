@@ -1,0 +1,22 @@
+# Ignore build outputs
+x64/
+*.obj
+*.exe
+*.log
+*.tlog
+*.pdb
+*.idb
+*.ipch
+*.lastbuildstate
+*.sdf
+*.opensdf
+*.suo
+*.user
+*.rsuser
+*.vcxproj.user
+*.VC.db
+*.VC.opendb
+
+# Ignore Visual Studio specific files
+.vscode/
+.vs/

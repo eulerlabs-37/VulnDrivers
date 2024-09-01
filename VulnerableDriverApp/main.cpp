@@ -1,94 +1,88 @@
 #include <windows.h>
-#include <stdio.h>
+#include <iostream>
+#include <sstream>
 
-#define IOCTL_READ_BUFFER CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_WRITE_BUFFER CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_READ_BYTE CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_WRITE_BYTE CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-#define BUFFER_SIZE 256
-
-struct WriteBufferInput {
-    ULONG index;
-    UCHAR value;
-};
-
-int main(int argc, char **argv)
+int main(int argc, char* argv[])
 {
-    HANDLE hDevice;
-    BOOL result;
-    DWORD bytesReturned;
-    UCHAR readValue;
-    PVOID kernelAddress;
-    struct WriteBufferInput writeInput;
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <kernel_address>" << std::endl;
+        return 1;
+    }
 
-    // Open a handle to the device
-    hDevice =
-        CreateFile(
-            L"\\\\.\\Vulnerable",
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            NULL,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL);
+    // Parse the memory address from argv[1]
+    std::stringstream ss;
+    ss << std::hex << argv[1];
+    PVOID address = nullptr;
+    ss >> address;
+
+    BOOL success;
+    DWORD bytesReturned;
+
+    if (address == nullptr) {
+        std::cerr << "Invalid address provided." << std::endl;
+        return 1;
+    }
+
+    HANDLE hDevice = CreateFile(
+        L"\\\\.\\MemoryAccessDevice",   // The symbolic link to the device
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL);
 
     if (hDevice == INVALID_HANDLE_VALUE) {
-        printf("Failed to open device - error %d\n", GetLastError());
+        std::cerr << "Failed to open device. Error: " << GetLastError() << std::endl;
         return 1;
     }
 
-    // Write 'A' to index 10 in the kernel buffer
-    writeInput.index = atoi(argv[1]);
-    writeInput.value = 'A';
+    UCHAR buffer[9]; // buffer[0-7] = address, buffer[8] = value
 
-    UCHAR writeBuffer[sizeof(writeInput) + sizeof(PVOID)];
+    // Example: Read a byte from the kernel memory address
+    memcpy(buffer, &address, sizeof(PVOID)); // Copy the address to buffer[0-7]
 
-    memcpy(writeBuffer, &writeInput, sizeof(writeInput));
-
-    result = DeviceIoControl(hDevice,
-        IOCTL_WRITE_BUFFER,
-        writeBuffer,
-        sizeof(writeBuffer),
-        writeBuffer,
-        sizeof(writeBuffer),
+    success = DeviceIoControl(
+        hDevice,
+        IOCTL_READ_BYTE,
+        &buffer,
+        sizeof(buffer),
+        &buffer,
+        sizeof(buffer),
         &bytesReturned,
         NULL);
 
-    if (!result) {
-        printf("Failed to write to device - error %d\n", GetLastError());
-        CloseHandle(hDevice);
-        return 1;
+    if (success) {
+        std::cout << "Read successful, value: 0x" << std::hex << static_cast<int>(buffer[8]) << std::endl;
+    }
+    else {
+        std::cerr << "Read failed. Error: " << GetLastError() << std::endl;
     }
 
-    kernelAddress = *(PVOID*)(writeBuffer + sizeof(writeInput));
-    printf("Wrote 'A' to index 10. Kernel address: %p\n", kernelAddress);
+    // Example: Write a byte to the kernel memory address
+    memcpy(buffer, &address, sizeof(PVOID));   // Copy the address to buffer[0-7]
+    buffer[8] = 0xAB;                          // Value to write
 
-    // Read from index 10 in the kernel buffer
-    ULONG readIndex = 10;
-    UCHAR readBuffer[sizeof(UCHAR) + sizeof(PVOID)];
-
-    memcpy(readBuffer, &readIndex, sizeof(readIndex));
-
-    result = DeviceIoControl(hDevice,
-        IOCTL_READ_BUFFER,
-        readBuffer,
-        sizeof(readIndex),
-        readBuffer,
-        sizeof(readBuffer),
+    success = DeviceIoControl(
+        hDevice,
+        IOCTL_WRITE_BYTE,
+        &buffer,
+        sizeof(buffer),
+        NULL,
+        0,
         &bytesReturned,
         NULL);
 
-    if (!result) {
-        printf("Failed to read from device - error %d\n", GetLastError());
-        CloseHandle(hDevice);
-        return 1;
+    if (success) {
+        std::cout << "Write successful" << std::endl;
+    }
+    else {
+        std::cerr << "Write failed. Error: " << GetLastError() << std::endl;
     }
 
-    readValue = *(UCHAR*)readBuffer;
-    kernelAddress = *(PVOID*)(readBuffer + sizeof(UCHAR));
-    printf("Read value: '%c' from index 10. Kernel address: %p\n", readValue, kernelAddress);
-
-    // Close the handle to the device
     CloseHandle(hDevice);
-
     return 0;
 }

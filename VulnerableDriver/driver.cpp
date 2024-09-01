@@ -1,143 +1,112 @@
 #include <ntddk.h>
 
-// Define IOCTL codes
-#define IOCTL_READ_BUFFER CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_WRITE_BUFFER CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_READ_BYTE CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_WRITE_BYTE CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-// Define the size of the kernel buffer
-#define BUFFER_SIZE 16
+// Forward declarations
+extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath);
+extern "C" VOID UnloadDriver(IN PDRIVER_OBJECT DriverObject);
+extern "C" NTSTATUS DispatchCreateClose(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
+extern "C" NTSTATUS DispatchIoctl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 
-// Declare a buffer in the kernel space
-UCHAR KernelBuffer[BUFFER_SIZE];
-
-NTSTATUS DriverUnsupported(PDEVICE_OBJECT DeviceObject, PIRP Irp);
-NTSTATUS DriverCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp);
-NTSTATUS DriverClose(PDEVICE_OBJECT DeviceObject, PIRP Irp);
-NTSTATUS DriverIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp);
-
-VOID DriverUnload(PDRIVER_OBJECT DriverObject)
-{
-    UNICODE_STRING SymbolicLinkName;
-
-    // Print a debug message
-    DbgPrint("DriverUnload Called\n");
-
-    // Define the symbolic link name
-    RtlInitUnicodeString(&SymbolicLinkName, L"\\DosDevices\\Vulnerable");
-
-    // Delete the symbolic link
-    IoDeleteSymbolicLink(&SymbolicLinkName);
-
-    // Delete the device object
-    IoDeleteDevice(DriverObject->DeviceObject);
-}
-
-extern "C"
-NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
+extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath)
 {
     UNREFERENCED_PARAMETER(RegistryPath);
-    UNICODE_STRING DeviceName;
-    UNICODE_STRING SymbolicLinkName;
+
+    // Setup the driver unload routine
+    DriverObject->DriverUnload = UnloadDriver;
+
+    // Setup the dispatch routines
+    DriverObject->MajorFunction[IRP_MJ_CREATE] = DispatchCreateClose;
+    DriverObject->MajorFunction[IRP_MJ_CLOSE] = DispatchCreateClose;
+    DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DispatchIoctl;
+
+    // Create the device object
+    UNICODE_STRING devName;
+    RtlInitUnicodeString(&devName, L"\\Device\\MemoryAccessDevice");
+
     PDEVICE_OBJECT DeviceObject = NULL;
-    NTSTATUS status;
-
-    DbgPrint("DriverEntry Called\n");
-
-    RtlInitUnicodeString(&DeviceName, L"\\Device\\Vulnerable");
-    RtlInitUnicodeString(&SymbolicLinkName, L"\\DosDevices\\Vulnerable");
-
-    status = IoCreateDevice(
+    NTSTATUS status = IoCreateDevice(
         DriverObject,
-        0,
-        &DeviceName,
+        0, // No device extension
+        &devName,
         FILE_DEVICE_UNKNOWN,
-        FILE_DEVICE_SECURE_OPEN, // check with article + above
+        0,
         FALSE,
         &DeviceObject);
 
     if (!NT_SUCCESS(status)) {
-        DbgPrint("Failed to create device\n");
         return status;
     }
 
-    status = IoCreateSymbolicLink(&SymbolicLinkName, &DeviceName);
+    // Create symbolic link
+    UNICODE_STRING symLink;
+    RtlInitUnicodeString(&symLink, L"\\DosDevices\\MemoryAccessDevice");
+    status = IoCreateSymbolicLink(&symLink, &devName);
+
     if (!NT_SUCCESS(status)) {
         IoDeleteDevice(DeviceObject);
-        DbgPrint("Failed to create symbolic link\n");
-        return status;
     }
 
-    DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverCreate;
-    DriverObject->MajorFunction[IRP_MJ_CLOSE] = DriverClose;
-    DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DriverIoControl;
-    DriverObject->DriverUnload = DriverUnload;
-
-    return STATUS_SUCCESS;
+    return status;
 }
 
-NTSTATUS DriverCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+extern "C" VOID UnloadDriver(IN PDRIVER_OBJECT DriverObject)
+{
+    UNICODE_STRING symLink;
+    RtlInitUnicodeString(&symLink, L"\\DosDevices\\MemoryAccessDevice");
+    IoDeleteSymbolicLink(&symLink);
+    IoDeleteDevice(DriverObject->DeviceObject);
+}
+
+extern "C" NTSTATUS DispatchCreateClose(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
     UNREFERENCED_PARAMETER(DeviceObject);
-    DbgPrint("DriverCreate Called\n");
 
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
-
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
+
     return STATUS_SUCCESS;
 }
 
-NTSTATUS DriverClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+extern "C" NTSTATUS DispatchIoctl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
     UNREFERENCED_PARAMETER(DeviceObject);
-    DbgPrint("DriverClose Called\n");
 
-    Irp->IoStatus.Status = STATUS_SUCCESS;
-    Irp->IoStatus.Information = 0;
-
-    IoCompleteRequest(Irp, IO_NO_INCREMENT);
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS DriverIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
-{
-    UNREFERENCED_PARAMETER(DeviceObject);
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
-    NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
-    ULONG bytesTransferred = 0;
+    ULONG ioControlCode = stack->Parameters.DeviceIoControl.IoControlCode;
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG bytesReturned = 0;
 
-    switch (stack->Parameters.DeviceIoControl.IoControlCode)
+    // We expect the user to pass a UCHAR array containing the address and data
+    UCHAR* buffer = (UCHAR*)Irp->AssociatedIrp.SystemBuffer;
+
+    switch (ioControlCode)
     {
-    case IOCTL_READ_BUFFER: {
-        ULONG index;
-        if (Irp->AssociatedIrp.SystemBuffer != NULL) {
-            index = *(ULONG*)Irp->AssociatedIrp.SystemBuffer;
-            // Read from KernelBuffer and return the address of the read location
-            *(UCHAR*)Irp->AssociatedIrp.SystemBuffer = KernelBuffer[index];
-            *(PVOID*)((UCHAR*)Irp->AssociatedIrp.SystemBuffer + sizeof(UCHAR)) = &KernelBuffer[index];
-            bytesTransferred = sizeof(UCHAR) + sizeof(PVOID);
+    case IOCTL_READ_BYTE:
+        if (buffer) {
+            PVOID address = *(PVOID*)buffer;  // The first 8 bytes in the buffer is the address
+            buffer[8] = *(UCHAR*)address;     // Read the byte at the specified address into buffer[8]
+            bytesReturned = 9 * sizeof(UCHAR);
             status = STATUS_SUCCESS;
         }
-        break;
-    }
-
-    case IOCTL_WRITE_BUFFER:
-    {
-        struct WriteBufferInput {
-            ULONG index;
-            UCHAR value;
-        } *input;
-
-        if (Irp->AssociatedIrp.SystemBuffer != NULL) {
-            input = (WriteBufferInput*)Irp->AssociatedIrp.SystemBuffer;
-            // Write to KernelBuffer and return the address of the written location
-            KernelBuffer[input->index] = input->value;
-            *(PVOID*)((UCHAR*)Irp->AssociatedIrp.SystemBuffer + sizeof(WriteBufferInput)) = &KernelBuffer[input->index];
-            bytesTransferred = sizeof(WriteBufferInput) + sizeof(PVOID);
-            status = STATUS_SUCCESS;
+        else {
+            status = STATUS_INVALID_PARAMETER;
         }
         break;
-    }
+
+    case IOCTL_WRITE_BYTE:
+        if (buffer) {
+            PVOID address = *(PVOID*)buffer;  // The first 8 bytes in the buffer is the address
+            *(UCHAR*)address = buffer[8];     // Write the byte in buffer[8] to the specified address
+            bytesReturned = 9 * sizeof(UCHAR);
+            status = STATUS_SUCCESS;
+        }
+        else {
+            status = STATUS_INVALID_PARAMETER;
+        }
+        break;
 
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
@@ -145,8 +114,7 @@ NTSTATUS DriverIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
 
     Irp->IoStatus.Status = status;
-    Irp->IoStatus.Information = bytesTransferred;
-
+    Irp->IoStatus.Information = bytesReturned;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return status;
 }

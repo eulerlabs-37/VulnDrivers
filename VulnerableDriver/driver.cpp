@@ -41,7 +41,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRI
 
     // Create symbolic link
     UNICODE_STRING symLink;
-    RtlInitUnicodeString(&symLink, L"\\DosDevices\\MemoryAccessDevice");
+    RtlInitUnicodeString(&symLink, L"\\DosDevices\\VulnerableDriver");
     status = IoCreateSymbolicLink(&symLink, &devName);
 
     if (!NT_SUCCESS(status)) {
@@ -54,7 +54,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRI
 extern "C" VOID UnloadDriver(IN PDRIVER_OBJECT DriverObject)
 {
     UNICODE_STRING symLink;
-    RtlInitUnicodeString(&symLink, L"\\DosDevices\\MemoryAccessDevice");
+    RtlInitUnicodeString(&symLink, L"\\DosDevices\\VulnerableDriver");
     IoDeleteSymbolicLink(&symLink);
     IoDeleteDevice(DriverObject->DeviceObject);
 }

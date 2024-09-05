@@ -27,7 +27,7 @@ int main(int argc, char* argv[])
     }
 
     HANDLE hDevice = CreateFile(
-        L"\\\\.\\MemoryAccessDevice",   // The symbolic link to the device
+        L"\\\\.\\VulnerableDriver",   // The symbolic link to the device
         GENERIC_READ | GENERIC_WRITE,
         0,
         NULL,

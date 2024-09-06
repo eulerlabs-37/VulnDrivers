@@ -12,7 +12,6 @@ extern "C" NTSTATUS DispatchIoctl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath)
 {
     UNREFERENCED_PARAMETER(RegistryPath);
-
     // Setup the driver unload routine
     DriverObject->DriverUnload = UnloadDriver;
 
@@ -23,7 +22,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRI
 
     // Create the device object
     UNICODE_STRING devName;
-    RtlInitUnicodeString(&devName, L"\\Device\\MemoryAccessDevice");
+    RtlInitUnicodeString(&devName, L"\\Device\\VulnerableDevice");
 
     PDEVICE_OBJECT DeviceObject = NULL;
     NTSTATUS status = IoCreateDevice(
